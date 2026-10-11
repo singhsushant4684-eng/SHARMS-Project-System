@@ -11,9 +11,11 @@ app.use(express.json());
 
 // Connect to local MongoDB instance
 mongoose.connect('mongodb://127.0.0.1:27017/sharms_db')
-  .then(() => {
+  .then(async () => {
     console.log('📦 Connected to MongoDB successfully!');
-    seedDefaultDevices();
+    await seedDefaultDevices();
+    await seedDefaultLogs();
+    await seedDefaultUser();
   })
   .catch((err) => console.error('❌ MongoDB connection error:', err));
 
@@ -31,6 +33,15 @@ const deviceSchema = new mongoose.Schema({
 
 // 2. Create the Model
 const Device = mongoose.model('Device', deviceSchema);
+
+const logSchema = new mongoose.Schema({
+  title: String,
+  type: { type: String, default: 'INFO' },
+  message: String,
+  timestamp: { type: String, default: () => new Date().toTimeString().split(' ')[0] }
+}, { timestamps: true });
+
+const Log = mongoose.model('Log', logSchema);
 
 // Seed default devices if the database is empty
 async function seedDefaultDevices() {
@@ -52,6 +63,53 @@ async function seedDefaultDevices() {
   }
 }
 
+async function seedDefaultLogs() {
+  try {
+    const logCount = await Log.countDocuments();
+    if (logCount === 0) {
+      await Log.insertMany([
+        { title: 'System Gateway', type: 'INFO', message: 'SHARMS core initialization successful.', timestamp: '14:30:01' },
+        { title: 'Kitchen Leak Sensor', type: 'WARNING', message: 'Node went OFFLINE. Connection timeout.', timestamp: '14:30:12' },
+        { title: 'Front Smart Lock', type: 'INFO', message: 'Front Door locked. System in safe state.', timestamp: '14:29:58' }
+      ]);
+      console.log('🌱 Seeded default audit logs into MongoDB!');
+    }
+  } catch (err) {
+    console.error('Error seeding logs:', err);
+  }
+}
+
+const bcrypt = require('bcrypt');
+
+// 1. Define User Schema & Model
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { type: String, default: 'admin' }
+}, { timestamps: true });
+
+const User = mongoose.model('User', userSchema);
+
+// 2. Seeder for Default Admin User
+async function seedDefaultUser() {
+  try {
+    const userCount = await User.countDocuments();
+    if (userCount === 0) {
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash('admin123', salt);
+      
+      await User.create({
+        username: 'admin',
+        password: hashedPassword,
+        role: 'admin'
+      });
+      console.log('🌱 Seeded default admin user into MongoDB!');
+    }
+  } catch (err) {
+    console.error('Error seeding default user:', err);
+  }
+}
+
 // In-Memory Data Store (Audit Logs)
 let auditLogs = [
   { id: 1, title: 'System Boot', type: 'INFO', message: 'SHARMS Core initialized successfully.', timestamp: new Date().toLocaleTimeString() }
@@ -70,35 +128,56 @@ let resourceHistory = [
   { id: 2, metric: 'WATER', value: 125.5, unit: 'Litres', timestamp: '10:00 AM' }
 ];
 
-// 1. Authentication Route (POST /api/auth/login)
-app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body;
+// Database-Powered Authentication Route (POST /api/auth/login)
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
-  if (username === 'admin' && password === 'admin123') {
+    // Find the user in MongoDB
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid username or password.' });
+    }
+
+    // Securely compare the submitted password with the hashed database password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Invalid username or password.' });
+    }
+
+    // Generate token upon successful authentication
     const mockToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3MDIwMDAwMDB9.mock_sharms_jwt_signature';
-    return res.status(200).json({ success: true, token: mockToken, message: 'Authentication successful!' });
+    return res.status(200).json({ 
+      success: true, 
+      token: mockToken, 
+      message: 'Authentication successful!' 
+    });
+
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error during authentication' });
   }
-
-  return res.status(401).json({ success: false, message: 'Invalid username or password.' });
 });
 
-// 2. Get Audit Logs Route (GET /api/logs)
-app.get('/api/logs', (req, res) => {
-  res.status(200).json({ success: true, logs: auditLogs });
+// 2. Get Audit Logs Route (MongoDB-powered)
+app.get('/api/logs', async (req, res) => {
+  try {
+    const logs = await Log.find().sort({ createdAt: -1 }).limit(50);
+    res.json({ success: true, logs: logs });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to fetch logs' });
+  }
 });
 
-// 3. Add Audit Log Route (POST /api/logs)
-app.post('/api/logs', (req, res) => {
-  const { title, type, message } = req.body;
-  const newLog = {
-    id: auditLogs.length + 1,
-    title: title || 'System Event',
-    type: type || 'INFO',
-    message: message || 'Action performed.',
-    timestamp: new Date().toLocaleTimeString()
-  };
-  auditLogs.unshift(newLog);
-  res.status(201).json({ success: true, log: newLog });
+// 3. Add Audit Log Route (MongoDB-powered)
+app.post('/api/logs', async (req, res) => {
+  try {
+    const newLog = new Log(req.body);
+    await newLog.save();
+    res.json({ success: true, log: newLog });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to save log' });
+  }
 });
 
 // ==========================================
@@ -109,7 +188,7 @@ app.post('/api/logs', (req, res) => {
 app.get('/api/devices', async (req, res) => {
   try {
     const devices = await Device.find();
-    res.json({ success: true, devices: devices }); // ✅ Wrap it so app.js can read it!
+    res.json({ success: true, devices: devices }); 
   } catch (err) {
     res.status(500).json({ success: false, error: 'Failed to fetch devices' });
   }
@@ -121,7 +200,7 @@ app.put('/api/devices/:id', async (req, res) => {
     const updatedDevice = await Device.findOneAndUpdate(
       { id: req.params.id }, 
       req.body, 
-      { new: true }
+      { returnDocument: 'after' }
     );
     
     if (!updatedDevice) {

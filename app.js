@@ -142,6 +142,8 @@ async function handleLogin(e) {
   // 9. Render devices & initialize charts
   fetchAndRenderDevices();
   fetchAndRenderResources();
+  fetchAndRenderLogs();
+
   if (!chartsInitialized) {
     try {
       initCharts();
@@ -304,6 +306,19 @@ async function fetchAndRenderResources() {
     }
   } catch (error) {
     console.error('Failed to fetch resource metrics from backend:', error);
+  }
+}
+
+async function fetchAndRenderLogs() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/logs`);
+    const data = await response.json();
+    if (data.success && data.logs) {
+      auditLogs = data.logs;
+      renderLogs(); // Re-renders the table with database logs
+    }
+  } catch (error) {
+    console.error('Failed to fetch audit logs from backend:', error);
   }
 }
 
