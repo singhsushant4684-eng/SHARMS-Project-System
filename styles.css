@@ -1534,10 +1534,16 @@ section.active,
   border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
-.badge-sev.warn {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+/* Add styling for the warning severity badge */
+.badge-sev.warning {
+  background-color: rgba(217, 119, 6, 0.2); /* Soft amber/orange background */
+  color: #f59e0b; /* Amber text color */
+  border: 1px solid rgba(217, 119, 6, 0.4);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-block;
 }
 
 .badge-sev.critical {

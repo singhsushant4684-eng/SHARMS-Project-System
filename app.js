@@ -6,12 +6,22 @@ let devices = [
   { id: 'dev-2', name: 'Climate Thermostat', type: 'THERMOSTAT', room: 'Living Room', status: 'ONLINE', targetTemp: 22 },
   { id: 'dev-3', name: 'Front Smart Lock', type: 'LOCK', room: 'Entrance', status: 'ONLINE', isLocked: true },
   { id: 'dev-4', name: 'Bedroom Mood Lamp', type: 'LIGHT', room: 'Bedroom', status: 'ONLINE', isPoweredOn: false },
-  { id: 'dev-5', name: 'Kitchen Leak Sensor', type: 'LIGHT', room: 'Kitchen', status: 'OFFLINE', isPoweredOn: false }
+  { id: 'dev-5', name: 'Kitchen Leak Sensor', type: 'LIGHT', room: 'Kitchen', status: 'OFFLINE', isPoweredOn: true }
+];
+
+let auditLogs = [
+  { id: 1, title: 'System Gateway', type: 'INFO', message: 'SHARMS core initialization successful.', timestamp: '14:30:01' },
+  { id: 2, title: 'Kitchen Leak Sensor', type: 'WARNING', message: 'Node went OFFLINE. Connection timeout.', timestamp: '14:30:12' },
+  { id: 3, title: 'Front Smart Lock' , type: 'INFO', message:" Front Door locked. System in safe state.", timestamp: '14:29:58'},
+  { id: 4, title: 'Climate Thermostat' , type: 'INFO', message:"Temperature set to 22 Degree Celsius", timestamp: '14:29:30'},
+  { id: 5, title: 'Bedroom Mood Lamp', type: 'INFO', message: 'Power toggled to ON', timestamp: '23:39:47' },
+  { id: 6, title: 'Main Ceiling Light', type: 'INFO', message: 'Main Ceiling Light toggle to ON', timestamp: '23:40:12' },
 ];
 
 let currentFilter = 'ALL';
 let chartsInitialized = false;
 
+// AUTO-LOAD SAVED SESSION ON PAGE LOAD
 // AUTO-LOAD SAVED SESSION ON PAGE LOAD
 window.addEventListener('DOMContentLoaded', () => {
   const savedName = localStorage.getItem('sharms_user_name');
@@ -26,7 +36,30 @@ window.addEventListener('DOMContentLoaded', () => {
     const userAvatarEl = document.getElementById('user-avatar');
     if (userAvatarEl) userAvatarEl.innerText = savedInitials;
   }
+
+  // Render initial audit logs on page load
+  renderLogs();
 });
+
+// HELPER TO RENDER INITIAL AUDIT LOGS
+function renderLogs() {
+  const tbody = document.getElementById('logs-table-body');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  // Render starting from the latest (or reverse if needed)
+  auditLogs.forEach(log => {
+    const severityClass = log.type ? log.type.toLowerCase() : 'info';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono-lime">${log.timestamp}</td>
+      <td><span class="entity-badge">${log.title}</span></td>
+      <td><span class="badge-sev ${severityClass}">${log.type.toUpperCase()}</span></td>
+      <td>${log.message}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
 
 // AUTHENTICATION FLOW
 async function handleLogin(e) {
@@ -108,6 +141,7 @@ async function handleLogin(e) {
 
   // 9. Render devices & initialize charts
   fetchAndRenderDevices();
+  fetchAndRenderResources();
   if (!chartsInitialized) {
     try {
       initCharts();
@@ -247,6 +281,32 @@ async function fetchAndRenderDevices() {
   }
 }
 
+// FETCH AND RENDER RESOURCE METRICS
+async function fetchAndRenderResources() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/resources`);
+    const data = await response.json();
+    
+    if (data.success && data.resources) {
+      const res = data.resources;
+      
+      // Update your UI elements if they exist on the page
+      // (Make sure to match these IDs with your HTML elements if you display them)
+      const electricityEl = document.getElementById('metric-electricity');
+      const waterEl = document.getElementById('metric-water');
+      const gasEl = document.getElementById('metric-gas');
+      
+      if (electricityEl) electricityEl.innerText = `${res.electricityKW} kW`;
+      if (waterEl) waterEl.innerText = `${res.waterLitres} L`;
+      if (gasEl) gasEl.innerText = `${res.gasM3} m³`;
+      
+      console.log('Resource metrics loaded successfully:', res);
+    }
+  } catch (error) {
+    console.error('Failed to fetch resource metrics from backend:', error);
+  }
+}
+
 // DEVICE OPERATIONS
 async function togglePower(id) {
   const dev = devices.find(d => d.id === id);
@@ -266,7 +326,7 @@ async function toggleStatus(id) {
   addLog(
     dev.name, 
     dev.status === 'OFFLINE' ? 'WARNING' : 'INFO', 
-    `Device connection state toggled to ${dev.status}`
+    dev.status === 'OFFLINE' ? 'Node went OFFLINE. Connection timeout.' : `Device connection state toggled to ${dev.status}`
   );
 
   renderDevices();
@@ -293,7 +353,10 @@ async function toggleLock(id) {
 
 function removeDevice(id) {
   const dev = devices.find(d => d.id === id);
-  if (dev) addLog(dev.name, 'WARNING', 'Device unbound from SHARMS workspace');
+  if (dev) {
+    // Change 'WARNING' to 'CRITICAL' here:
+    addLog(dev.name, 'CRITICAL', 'Device unbound from SHARMS workspace');
+  }
   devices = devices.filter(d => d.id !== id);
   renderDevices();
 }
@@ -550,21 +613,32 @@ function filterLogs() {
 }
 
 function filterSeverity(sev) {
-  const buttons = document.querySelectorAll('.log-filter-btn');
+  // 1. Remove active class from all filter buttons across any naming convention
+  const buttons = document.querySelectorAll('button[onclick*="filterSeverity"]');
   buttons.forEach(btn => btn.classList.remove('active'));
 
-  if (event && event.target) {
-    event.target.classList.add('active');
+  // 2. Highlight the clicked button safely
+  const activeBtn = event ? event.target.closest('button') : null;
+  if (activeBtn) {
+    activeBtn.classList.add('active');
   }
 
+  // 3. Normalize filter string (e.g. 'Warning' -> 'WARNING')
+  const targetSev = sev ? sev.trim().toUpperCase() : 'ALL';
+
+  // 4. Filter table rows
   const rows = document.querySelectorAll('#logs-table-body tr');
   rows.forEach(row => {
-    if (sev === 'ALL') {
+    if (targetSev === 'ALL') {
       row.style.display = '';
     } else {
       const badge = row.querySelector('.badge-sev');
-      const isMatch = badge && badge.innerText.trim().toUpperCase() === sev;
-      row.style.display = isMatch ? '' : 'none';
+      if (badge) {
+        const badgeText = badge.innerText.trim().toUpperCase();
+        row.style.display = (badgeText === targetSev) ? '' : 'none';
+      } else {
+        row.style.display = 'none';
+      }
     }
   });
 }
