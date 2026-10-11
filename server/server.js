@@ -22,6 +22,19 @@ let devices = [
   { id: 'dev-5', name: 'Kitchen Leak Sensor', type: 'LIGHT', room: 'Kitchen', status: 'OFFLINE', isPoweredOn: false }
 ];
 
+// In-Memory Resource Store
+let resourceData = {
+  electricityKW: 1.42,
+  waterLitres: 125.5,
+  gasM3: 0.85,
+  lastUpdated: new Date().toLocaleTimeString()
+};
+
+let resourceHistory = [
+  { id: 1, metric: 'ELECTRICITY', value: 1.42, unit: 'kW', timestamp: '10:00 AM' },
+  { id: 2, metric: 'WATER', value: 125.5, unit: 'Litres', timestamp: '10:00 AM' }
+];
+
 // 1. Authentication Route (POST /api/auth/login)
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
@@ -81,6 +94,72 @@ app.put('/api/devices/:id', (req, res) => {
   Object.assign(device, updates);
   res.status(200).json({ success: true, device });
 });
+
+// Get Resource Metrics Route (GET /api/resources)
+app.get('/api/resources', (req, res) => {
+  res.status(200).json({ 
+    success: true, 
+    resources: resourceData,
+    history: resourceHistory 
+  });
+});
+
+// Update or Record Resource Metrics Route (POST /api/resources)
+app.post('/api/resources', (req, res) => {
+  const { electricityKW, waterLitres, gasM3 } = req.body;
+
+  // Update current metrics if provided
+  if (electricityKW !== undefined) resourceData.electricityKW = electricityKW;
+  if (waterLitres !== undefined) resourceData.waterLitres = waterLitres;
+  if (gasM3 !== undefined) resourceData.gasM3 = gasM3;
+  
+  resourceData.lastUpdated = new Date().toLocaleTimeString();
+
+  // Optionally push to history log
+  const newEntry = {
+    id: resourceHistory.length + 1,
+    metric: 'UPDATE',
+    value: electricityKW || waterLitres || gasM3,
+    timestamp: resourceData.lastUpdated
+  };
+  resourceHistory.unshift(newEntry);
+
+  res.status(200).json({ 
+    success: true, 
+    message: 'Resource metrics updated successfully.', 
+    resources: resourceData 
+  });
+});
+
+let ecoModeActive = false;
+
+app.get('/api/ecomode', (req, res) => {
+  res.json({ success: true, ecoModeActive });
+});
+
+app.post('/api/ecomode', (req, res) => {
+  const { active } = req.body;
+  ecoModeActive = active;
+
+  if (ecoModeActive) {
+    devices.forEach(dev => {
+      if (dev.type === 'LIGHT' && dev.status === 'ONLINE') {
+        dev.isPoweredOn = false;
+      }
+      if (dev.type === 'THERMOSTAT' && dev.status === 'ONLINE') {
+        dev.targetTemp = 20;
+      }
+    });
+  }
+
+  res.json({ 
+    success: true, 
+    ecoModeActive, 
+    message: ecoModeActive ? 'EcoMode activated. Systems optimized for low power.' : 'EcoMode deactivated.',
+    devices 
+  });
+});
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`🚀 SHARMS Backend running on http://localhost:${PORT}`);
