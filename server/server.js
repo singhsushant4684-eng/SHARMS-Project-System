@@ -131,35 +131,6 @@ app.post('/api/resources', (req, res) => {
   });
 });
 
-let ecoModeActive = false;
-
-app.get('/api/ecomode', (req, res) => {
-  res.json({ success: true, ecoModeActive });
-});
-
-app.post('/api/ecomode', (req, res) => {
-  const { active } = req.body;
-  ecoModeActive = active;
-
-  if (ecoModeActive) {
-    devices.forEach(dev => {
-      if (dev.type === 'LIGHT' && dev.status === 'ONLINE') {
-        dev.isPoweredOn = false;
-      }
-      if (dev.type === 'THERMOSTAT' && dev.status === 'ONLINE') {
-        dev.targetTemp = 20;
-      }
-    });
-  }
-
-  res.json({ 
-    success: true, 
-    ecoModeActive, 
-    message: ecoModeActive ? 'EcoMode activated. Systems optimized for low power.' : 'EcoMode deactivated.',
-    devices 
-  });
-});
-
 // Start Server
 app.listen(PORT, () => {
   console.log(`🚀 SHARMS Backend running on http://localhost:${PORT}`);
