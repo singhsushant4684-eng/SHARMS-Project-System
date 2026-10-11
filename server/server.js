@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 
 const app = express();
 const PORT = 5000;
@@ -8,18 +9,52 @@ const PORT = 5000;
 app.use(cors());
 app.use(express.json());
 
+// Connect to local MongoDB instance
+mongoose.connect('mongodb://127.0.0.1:27017/sharms_db')
+  .then(() => {
+    console.log('📦 Connected to MongoDB successfully!');
+    seedDefaultDevices();
+  })
+  .catch((err) => console.error('❌ MongoDB connection error:', err));
+
+// 1. Define what a Device looks like in MongoDB
+const deviceSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  name: { type: String, required: true },
+  type: { type: String, required: true },
+  room: { type: String },
+  status: { type: String, default: 'ONLINE' },
+  isPoweredOn: { type: Boolean, default: false },
+  targetTemp: { type: Number },
+  isLocked: { type: Boolean }
+});
+
+// 2. Create the Model
+const Device = mongoose.model('Device', deviceSchema);
+
+// Seed default devices if the database is empty
+async function seedDefaultDevices() {
+  try {
+    const count = await Device.countDocuments();
+    if (count === 0) {
+      const defaultDevices = [
+        { id: 'dev-1', name: 'Main Ceiling Light', type: 'LIGHT', room: 'Living Room', status: 'ONLINE', isPoweredOn: true },
+        { id: 'dev-2', name: 'Climate Thermostat', type: 'THERMOSTAT', room: 'Living Room', status: 'ONLINE', targetTemp: 22 },
+        { id: 'dev-3', name: 'Front Smart Lock', type: 'LOCK', room: 'Entrance', status: 'ONLINE', isLocked: true },
+        { id: 'dev-4', name: 'Bedroom Mood Lamp', type: 'LIGHT', room: 'Bedroom', status: 'ONLINE', isPoweredOn: false },
+        { id: 'dev-5', name: 'Kitchen Leak Sensor', type: 'LIGHT', room: 'Kitchen', status: 'OFFLINE', isPoweredOn: false }
+      ];
+      await Device.insertMany(defaultDevices);
+      console.log('🌱 Seeded default devices into MongoDB!');
+    }
+  } catch (err) {
+    console.error('Error seeding devices:', err);
+  }
+}
+
 // In-Memory Data Store (Audit Logs)
 let auditLogs = [
   { id: 1, title: 'System Boot', type: 'INFO', message: 'SHARMS Core initialized successfully.', timestamp: new Date().toLocaleTimeString() }
-];
-
-// In-Memory Device Store
-let devices = [
-  { id: 'dev-1', name: 'Main Ceiling Light', type: 'LIGHT', room: 'Living Room', status: 'ONLINE', isPoweredOn: true },
-  { id: 'dev-2', name: 'Climate Thermostat', type: 'THERMOSTAT', room: 'Living Room', status: 'ONLINE', targetTemp: 22 },
-  { id: 'dev-3', name: 'Front Smart Lock', type: 'LOCK', room: 'Entrance', status: 'ONLINE', isLocked: true },
-  { id: 'dev-4', name: 'Bedroom Mood Lamp', type: 'LIGHT', room: 'Bedroom', status: 'ONLINE', isPoweredOn: false },
-  { id: 'dev-5', name: 'Kitchen Leak Sensor', type: 'LIGHT', room: 'Kitchen', status: 'OFFLINE', isPoweredOn: false }
 ];
 
 // In-Memory Resource Store
@@ -39,24 +74,14 @@ let resourceHistory = [
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
 
-  // Hardcoded admin check
   if (username === 'admin' && password === 'admin123') {
     const mockToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3MDIwMDAwMDB9.mock_sharms_jwt_signature';
-    
-    return res.status(200).json({
-      success: true,
-      token: mockToken,
-      message: 'Authentication successful!'
-    });
+    return res.status(200).json({ success: true, token: mockToken, message: 'Authentication successful!' });
   }
 
-  return res.status(401).json({
-    success: false,
-    message: 'Invalid username or password.'
-  });
+  return res.status(401).json({ success: false, message: 'Invalid username or password.' });
 });
 
-// 2. Get Audit Logs Route (GET /api/logs)
 // 2. Get Audit Logs Route (GET /api/logs)
 app.get('/api/logs', (req, res) => {
   res.status(200).json({ success: true, logs: auditLogs });
@@ -72,28 +97,44 @@ app.post('/api/logs', (req, res) => {
     message: message || 'Action performed.',
     timestamp: new Date().toLocaleTimeString()
   };
-  auditLogs.unshift(newLog); // Adds to the top of the array
+  auditLogs.unshift(newLog);
   res.status(201).json({ success: true, log: newLog });
 });
 
+// ==========================================
+// MONGODB-POWERED DEVICE ROUTES
+// ==========================================
+
 // Get Devices Route (GET /api/devices)
-app.get('/api/devices', (req, res) => {
-  res.status(200).json({ success: true, devices });
-});
-
-// Update Device State Route (PUT /api/devices/:id)
-app.put('/api/devices/:id', (req, res) => {
-  const { id } = req.params;
-  const updates = req.body;
-
-  const device = devices.find(d => d.id === id);
-  if (!device) {
-    return res.status(404).json({ success: false, message: 'Device not found.' });
+app.get('/api/devices', async (req, res) => {
+  try {
+    const devices = await Device.find();
+    res.json({ success: true, devices: devices }); // ✅ Wrap it so app.js can read it!
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to fetch devices' });
   }
-
-  Object.assign(device, updates);
-  res.status(200).json({ success: true, device });
 });
+
+// Update Device State Route (PATCH /api/devices/:id)
+app.put('/api/devices/:id', async (req, res) => {
+  try {
+    const updatedDevice = await Device.findOneAndUpdate(
+      { id: req.params.id }, 
+      req.body, 
+      { new: true }
+    );
+    
+    if (!updatedDevice) {
+      return res.status(404).json({ success: false, error: 'Device not found' });
+    }
+    
+    res.json({ success: true, device: updatedDevice });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to update device' });
+  }
+});
+
+// ==========================================
 
 // Get Resource Metrics Route (GET /api/resources)
 app.get('/api/resources', (req, res) => {
@@ -104,18 +145,18 @@ app.get('/api/resources', (req, res) => {
   });
 });
 
+
+
 // Update or Record Resource Metrics Route (POST /api/resources)
 app.post('/api/resources', (req, res) => {
   const { electricityKW, waterLitres, gasM3 } = req.body;
 
-  // Update current metrics if provided
   if (electricityKW !== undefined) resourceData.electricityKW = electricityKW;
   if (waterLitres !== undefined) resourceData.waterLitres = waterLitres;
   if (gasM3 !== undefined) resourceData.gasM3 = gasM3;
   
   resourceData.lastUpdated = new Date().toLocaleTimeString();
 
-  // Optionally push to history log
   const newEntry = {
     id: resourceHistory.length + 1,
     metric: 'UPDATE',
